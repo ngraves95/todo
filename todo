@@ -1,0 +1,216 @@
+#!/bin/bash
+
+TODO_LOC=~/todo
+LIST_LOC=$TODO_LOC/list
+CATEGORY_COLOR='\033[1;34m'
+NO_COLOR='\033[0m'
+
+# Status field and its options.
+STATUS="status"
+UNFINISHED="not-done"
+FINISHED="done"
+
+DUE_DATE="due-date"
+
+COMMAND_LIST="add all cat date done loop not-done remove remove-done remove-category"
+
+function append_visual_separator() {
+    echo -n $1 " "
+}
+
+# Gets the doneness of a task.
+# Params:
+#     $1 := The full path to the task.
+function get_done() {
+    result=`awk -F: '{ if ($1 == "status") { print $2 } }' $1`
+    echo -n $result
+}
+
+# Params:
+# $1 := the category/task to update.
+# $2 := the field to update
+# $3 := the value to assign to the field
+# Usage: set_field CS-4001/Term-paper $STATUS $UNFINISHED
+function set_field() {
+    category=`echo $1 | tr -s ' ' '-'`
+    gawk -F: -v field=$2 -v value=$3 '{
+        if ($1 == field) {
+            printf $1FS value"\n"
+        } else {
+            printf $1FS$2"\n"
+        }
+    }' $LIST_LOC/$category > tmp && mv tmp $LIST_LOC/$category
+}
+
+function show_done() {
+    status=`get_done $1`
+    if [[ $status == *$UNFINISHED* ]]
+    then
+	echo -n "[ ]"
+    else
+	echo -n "[X]"
+    fi
+}
+
+# Gets the due date of a task.
+# Params:
+#     $1 := The full path to the task.
+function get_date() {
+    result=`awk -F: '{ if ($1 == "due-date") { print $2 } }' $1`
+    echo -n $result
+}
+
+# Given a full path to a file, returns only the name of the file.
+# Params:
+#     $1 := The full path to the file.
+function short_name() {
+    echo ${1##*/}
+}
+
+# Gets the full task line.
+# Params:
+#     $1 := The full path to the task.
+function show_task() {
+    show_done $1
+    echo -n " "
+    get_date $1
+    echo -n  "|"
+    short_name $1
+}
+
+# Echos all tasks.
+function list_all_tasks() {
+    find $LIST_LOC -type f
+}
+
+# Arg parsing section
+
+case $1 in
+    cat*)
+	for f in `ls $LIST_LOC`
+	do
+	    printf ${CATEGORY_COLOR}[$f]${NO_COLOR}:
+	    echo ""
+	    for task in `ls $LIST_LOC/$f`
+	    do
+		show_task $LIST_LOC/$f/$task
+	    done
+	    echo ""
+	done
+	;;
+    all)
+	for task in `list_all_tasks`
+	do
+	    show_task $task
+	done
+	;;
+    date)
+	declare -A map
+	# Map each task to its due date.
+	for task in `list_all_tasks`
+	do
+	    name=`short_name $task`
+	    map[$task]=`get_date $task`
+	done
+
+	# This takes each key-value pair, concatenates them together,
+	# sorts them based on the value (the date), then parses out
+	# only the value part (the task name).
+	sorted_tasks=`for key in "${!map[@]}"; do
+	    printf '%s:%s\n' "$key" "${map[$key]}"
+	done | sort -t : -k 2 | awk -F: '{ print $1 }'`
+
+	for task in $sorted_tasks
+	do
+	    show_task $task
+	done
+	;;
+    add)
+	# Arguments:
+	#     $2 := The category and name (e.g. CS-4001/Term-paper)
+	#     $3 := The due date of the task. Separators should be hyphens.
+	if [ "$#" -ne 3 ]; then
+	    echo "Wrong arguments"
+	    exit
+	fi
+
+	category=`echo $2 | tr -s ' ' '-'`
+	install -D -m644 /dev/null $LIST_LOC/$category
+	echo $STATUS:$UNFINISHED > $LIST_LOC/$category
+	echo $DUE_DATE:$3 | tr '/' '-' >> $LIST_LOC/$category
+	;;
+
+    done)
+	# Arguments
+	# $2 := my_category/my_name
+	if [ "$#" -ne 2 ]; then
+	    echo "Wrong arguments"
+	    exit
+	fi
+	set_field $2 $STATUS $FINISHED
+	;;
+
+    not-done)
+	# Arguments
+	# $2 := my_category/my_name
+	if [ "$#" -ne 2 ]; then
+	    echo "Wrong arguments"
+	    exit
+	fi
+	set_field $2 $STATUS $UNFINISHED
+	;;
+
+    set-due-date)
+	# Arguments
+	# $2 := my_category/my_name
+	# $3 := new/due/date
+	if [ "$#" -ne 3 ]; then
+	    echo "Wrong arguments"
+	    exit
+	fi
+	set_field $2 $DUE_DATE	`echo $3 | tr '/' '-'`
+	;;
+    remove-done)
+	for task in `list_all_tasks`
+	do
+	    if ! [[ `get_done $task` == *$UNFINISHED* ]]
+	    then
+		rm -f $task
+	    fi
+	done
+	;;
+    remove)
+	# Arguments
+	# $2 := category/name
+	if [ "$#" -ne 2 ]; then
+	    echo "Wrong arguments"
+	    exit
+	fi
+	category=`echo $2 | tr -s ' ' '-'`
+	rm -f $LIST_LOC/$category*
+	;;
+
+    remove-category)
+	# Arguments
+	# $2 := full todo-path to the category
+	rm -rf $LIST_LOC/$2
+	;;
+    loop)
+	while true
+	do
+	    clear
+	    todo cat
+	    sleep 3
+	done
+	;;
+    help)
+	echo $COMMAND_LIST
+	;;
+    "")
+	todo cat
+	;;
+    *)
+	echo $COMMAND_LIST
+	exit
+	;;
+esac
